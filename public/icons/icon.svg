@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable background — fills entire canvas pro různé clip shapes -->
+  <rect width="512" height="512" fill="#3B82F6"/>
+  <!-- Zaoblení rohu jen vizuálně (ne přes rx, aby maskable pracoval správně) -->
+  <rect width="512" height="512" rx="96" fill="#3B82F6"/>
+  <!-- Bílý calendar card -->
+  <rect x="88" y="148" width="336" height="276" rx="22" fill="white"/>
+  <!-- Tmavě modrý header -->
+  <rect x="88" y="148" width="336" height="92" rx="22" fill="#1E40AF"/>
+  <rect x="88" y="208" width="336" height="32" fill="#1E40AF"/>
+  <!-- Binding rings -->
+  <rect x="170" y="96" width="34" height="92" rx="17" fill="#1E40AF"/>
+  <rect x="308" y="96" width="34" height="92" rx="17" fill="#1E40AF"/>
+  <!-- Řada 1: tečky dnů -->
+  <circle cx="162" cy="312" r="18" fill="#BFDBFE"/>
+  <circle cx="256" cy="312" r="22" fill="#3B82F6"/>
+  <circle cx="350" cy="312" r="18" fill="#BFDBFE"/>
+  <!-- Řada 2 -->
+  <circle cx="162" cy="372" r="18" fill="#BFDBFE"/>
+  <circle cx="256" cy="372" r="18" fill="#BFDBFE"/>
+  <circle cx="350" cy="372" r="18" fill="#BFDBFE"/>
+</svg>

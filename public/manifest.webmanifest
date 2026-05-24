@@ -1,0 +1,30 @@
+{
+  "name": "Scheduler",
+  "short_name": "Scheduler",
+  "description": "Osobní time-management nástroj",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3B82F6",
+  "orientation": "portrait-primary",
+  "lang": "cs",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Dnes",
+      "short_name": "Dnes",
+      "description": "Přejít na dnešní datum",
+      "url": "/"
+    }
+  ]
+}
