@@ -1,16 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { format } from "date-fns";
+import { endOfDay, format, startOfDay } from "date-fns";
 import { cs } from "date-fns/locale";
-import { FileText, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { ArrowRight, FileText, Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EventForm, type EditEventData } from "@/components/event-form";
+import { EventDetailDialog, type EventDetailData } from "@/components/event-detail-dialog";
+import { NoteEditDialog, type NoteRow } from "@/components/note-edit-dialog";
 
 type EventRow = {
   id: string;
@@ -23,29 +25,36 @@ type EventRow = {
   parentEventId?: string | null;
 };
 
-type NoteRow = {
-  id: string;
-  userId: string;
-  title: string;
-  content: string | null;
-  targetDate: string | null;
-  eventId: string | null;
-};
-
 interface DailyAgendaProps {
   day: Date;
-  events: EventRow[];
   calendarColorMap: Map<string, string>;
+  /** Week mode: taller panel, higher item limit */
+  expanded?: boolean;
 }
 
-export function DailyAgenda({ day, events, calendarColorMap }: DailyAgendaProps) {
-  const [newNoteTitle, setNewNoteTitle] = useState("");
-  const [addingNote, setAddingNote] = useState(false);
+export function DailyAgenda({ day, calendarColorMap, expanded = false }: DailyAgendaProps) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EditEventData | null>(null);
-
-  const queryClient = useQueryClient();
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailEvent, setDetailEvent] = useState<EventDetailData | null>(null);
+  const [noteDialogOpen, setNoteDialogOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<NoteRow | null>(null);
   const dateKey = format(day, "yyyy-MM-dd");
+
+  // Fetch events for this specific day — self-contained so week navigation works correctly
+  const { data: events = [] } = useQuery<EventRow[]>({
+    queryKey: ["events", dateKey],
+    queryFn: async () => {
+      const res = await apiClient.api.events.$get({
+        query: {
+          from: startOfDay(day).toISOString(),
+          to: endOfDay(day).toISOString(),
+        },
+      });
+      if (!res.ok) throw new Error("Nepodařilo se načíst události");
+      return res.json() as Promise<EventRow[]>;
+    },
+  });
 
   const { data: dayNotes = [] } = useQuery<NoteRow[]>({
     queryKey: ["notes", dateKey],
@@ -58,53 +67,12 @@ export function DailyAgenda({ day, events, calendarColorMap }: DailyAgendaProps)
     },
   });
 
-  const createNote = useMutation({
-    mutationFn: async (title: string) => {
-      const res = await apiClient.api.notes.$post({
-        json: { title, targetDate: dateKey },
-      });
-      if (!res.ok) throw new Error("Nepodařilo se vytvořit poznámku");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notes"] });
-      setNewNoteTitle("");
-      setAddingNote(false);
-      toast.success("Poznámka přidána");
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const deleteNote = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.api.notes[":id"].$delete({ param: { id } });
-      if (!res.ok) throw new Error("Nepodařilo se smazat poznámku");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notes"] });
-      toast.success("Poznámka smazána");
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const deleteEvent = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiClient.api.events[":id"].$delete({ param: { id } });
-      if (!res.ok) throw new Error("Nepodařilo se smazat událost");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["events"] });
-      toast.success("Událost smazána");
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
   function isAllDay(event: EventRow) {
     return format(new Date(String(event.startTime)), "HH:mm") === "00:00";
   }
 
-  function handleEditEvent(event: EventRow) {
-    setEditingEvent({
+  function openEventDetail(event: EventRow) {
+    setDetailEvent({
       id: event.id,
       calendarId: event.calendarId,
       title: event.title,
@@ -113,166 +81,168 @@ export function DailyAgenda({ day, events, calendarColorMap }: DailyAgendaProps)
       endTime: String(event.endTime),
       recurrenceRule: event.recurrenceRule,
     });
+    setDetailOpen(true);
+  }
+
+  function handleEditFromDetail() {
+    if (!detailEvent) return;
+    setEditingEvent({
+      id: detailEvent.id,
+      calendarId: detailEvent.calendarId,
+      title: detailEvent.title,
+      description: detailEvent.description,
+      startTime: detailEvent.startTime,
+      endTime: detailEvent.endTime,
+      recurrenceRule: detailEvent.recurrenceRule,
+    });
     setFormOpen(true);
   }
 
+  const LIMIT = expanded ? 8 : 3;
+  const shownEvents = events.slice(0, LIMIT);
+  const shownNotes = dayNotes.slice(0, Math.max(0, LIMIT - shownEvents.length));
+  const hiddenCount =
+    events.length + dayNotes.length - shownEvents.length - shownNotes.length;
   const isEmpty = events.length === 0 && dayNotes.length === 0;
 
   return (
     <>
-      <div className="flex h-52 shrink-0 flex-col border-t bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
-        {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <div className="flex shrink-0 items-center border-b px-5 py-2.5">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold">
+      {/* Panel — zaoblené horní rohy, funguje jako floating sheet */}
+      <div className={cn(
+        "flex shrink-0 flex-col rounded-t-3xl border-t bg-background shadow-[0_-4px_24px_oklch(0_0_0/0.06)]",
+        expanded ? "min-h-0 flex-1 sm:flex-none sm:h-80" : "h-64 shrink-0"
+      )}>
+
+        {/* Hlavička */}
+        <div className="flex shrink-0 items-center gap-3 px-5 py-3">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="font-display text-base font-semibold">
               {format(day, "d. MMMM", { locale: cs })}
             </span>
-            <span className="text-xs capitalize text-muted-foreground">
+            <span className="truncate text-sm capitalize text-muted-foreground">
               {format(day, "EEEE", { locale: cs })}
             </span>
           </div>
-          <div className="ml-auto flex items-center gap-1">
+
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setEditingEvent(null);
-                setFormOpen(true);
-              }}
+              className="h-8 gap-1.5 rounded-2xl text-sm text-muted-foreground hover:text-foreground"
+              onClick={() => { setEditingEvent(null); setFormOpen(true); }}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" />
               Událost
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setAddingNote(true)}
+              className="h-8 gap-1.5 rounded-2xl text-sm text-muted-foreground hover:text-foreground"
+              onClick={() => { setEditingNote(null); setNoteDialogOpen(true); }}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" />
               Poznámka
             </Button>
           </div>
         </div>
 
-        {/* ── Unified list ────────────────────────────────────────────────────── */}
-        <ScrollArea className="flex-1">
-          <div className="flex flex-col gap-0.5 px-3 py-2">
-            {isEmpty && !addingNote && (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                Žádné události ani poznámky
-              </p>
-            )}
+        {/* Obsah + radial blur overlay */}
+        <div className="group relative min-h-0 flex-1 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="flex flex-col gap-0.5 px-4 pb-10 pt-1">
+              {isEmpty && (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Žádné události ani poznámky
+                </p>
+              )}
 
-            {/* Events — colored dot + time */}
-            {events.map((event) => {
-              const color = calendarColorMap.get(event.calendarId) ?? "#64748b";
-              const allDay = isAllDay(event);
-              return (
-                <div
-                  key={`${event.id}-${String(event.startTime)}`}
-                  className="group -mx-1 flex items-center gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-muted/50"
+              {shownEvents.map((event) => {
+                const color = calendarColorMap.get(event.calendarId) ?? "#8B6448";
+                return (
+                  <button
+                    key={`${event.id}-${String(event.startTime)}`}
+                    onClick={() => openEventDetail(event)}
+                    className="-mx-1 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-muted/50"
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="flex-1 truncate text-base">{event.title}</span>
+                    {!isAllDay(event) && (
+                      <span className="shrink-0 text-sm text-muted-foreground">
+                        {format(new Date(String(event.startTime)), "H:mm")}
+                        {" – "}
+                        {format(new Date(String(event.endTime)), "H:mm")}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {shownNotes.map((note) => (
+                <button
+                  key={note.id}
+                  onClick={() => { setEditingNote(note); setNoteDialogOpen(true); }}
+                  className="-mx-1 flex w-full items-start gap-3 rounded-2xl px-3 py-2 text-left transition-colors hover:bg-muted/50"
                 >
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="flex-1 truncate text-sm">{event.title}</span>
-                  {!allDay && (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {format(new Date(String(event.startTime)), "H:mm")}
-                      {" – "}
-                      {format(new Date(String(event.endTime)), "H:mm")}
-                    </span>
-                  )}
-                  <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      onClick={() => handleEditEvent(event)}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                      onClick={() => deleteEvent.mutate(event.id)}
-                      disabled={deleteEvent.isPending}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-note" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-base">{note.title}</p>
+                    {note.content && (
+                      <p className="mt-0.5 line-clamp-1 text-sm text-muted-foreground">
+                        {note.content}
+                      </p>
+                    )}
                   </div>
-                </div>
-              );
-            })}
+                </button>
+              ))}
 
-            {/* Notes — violet file icon */}
-            {dayNotes.map((note) => (
-              <div
-                key={note.id}
-                className="group -mx-1 flex items-center gap-3 rounded-lg px-3 py-1.5 transition-colors hover:bg-muted/50"
-              >
-                <FileText className="h-3.5 w-3.5 shrink-0 text-violet-400" />
-                <span className="flex-1 truncate text-sm text-muted-foreground">
-                  {note.title}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                  onClick={() => deleteNote.mutate(note.id)}
-                  disabled={deleteNote.isPending}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-            ))}
+              {hiddenCount > 0 && (
+                <p className="px-3 py-1 text-sm text-muted-foreground">
+                  +{hiddenCount} dalších…
+                </p>
+              )}
+            </div>
+          </ScrollArea>
 
-            {/* Inline add-note form */}
-            {addingNote && (
-              <form
-                className="mt-1 flex gap-1.5 px-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (newNoteTitle.trim()) createNote.mutate(newNoteTitle.trim());
-                }}
-              >
-                <Input
-                  autoFocus
-                  value={newNoteTitle}
-                  onChange={(e) => setNewNoteTitle(e.target.value)}
-                  placeholder="Nová poznámka..."
-                  className="h-7 flex-1 text-xs"
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      setAddingNote(false);
-                      setNewNoteTitle("");
-                    }
-                  }}
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2"
-                  disabled={!newNoteTitle.trim() || createNote.isPending}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </form>
-            )}
+          {/*
+           * Radial blur — disperzně se zobrazí kolem tlačítka dole uprostřed.
+           * pointer-events-none = nekryje interakci s položkami výše.
+           */}
+          <div className="agenda-radial-blur absolute inset-0 z-10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
+          {/* Tlačítko "Detail dne" — uprostřed dole, jen při hoveru */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center pb-3 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+            <Link
+              href={`/day/${dateKey}`}
+              className="pointer-events-auto flex items-center gap-2 rounded-full border bg-background/95 px-5 py-2 text-sm font-medium shadow-lg transition-shadow hover:shadow-xl"
+            >
+              Detail dne
+              <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
+      <EventDetailDialog
+        event={detailEvent}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        calendarColorMap={calendarColorMap}
+        onEdit={handleEditFromDetail}
+      />
       <EventForm
         open={formOpen}
         onOpenChange={setFormOpen}
         initialDate={day}
         editEvent={editingEvent}
+      />
+      <NoteEditDialog
+        note={editingNote}
+        targetDate={dateKey}
+        open={noteDialogOpen}
+        onOpenChange={setNoteDialogOpen}
       />
     </>
   );

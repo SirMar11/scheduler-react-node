@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format, getDay } from "date-fns";
+import { format, getDay, parseISO } from "date-fns";
 import { cs } from "date-fns/locale";
 import { AlignLeft, ChevronDown, Clock, RefreshCw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -77,13 +77,12 @@ export function EventForm({
 }: EventFormProps) {
   const isEditMode = !!editEvent;
 
-  // Referenční datum — v edit módu z existující události, jinak z kliknutého dne
-  const refDate = editEvent
-    ? new Date(String(editEvent.startTime))
-    : (initialDate ?? new Date());
+  const todayStr = format(initialDate ?? new Date(), "yyyy-MM-dd");
 
   const [title, setTitle] = useState("");
   const [isAllDay, setIsAllDay] = useState(true);
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [calendarId, setCalendarId] = useState("");
@@ -99,23 +98,25 @@ export function EventForm({
     if (!open) return;
 
     if (editEvent) {
+      const evStart = new Date(String(editEvent.startTime));
+      const evEnd = new Date(String(editEvent.endTime));
       setTitle(editEvent.title);
       setDescription(editEvent.description ?? "");
       setCalendarId(editEvent.calendarId);
       setRecurrence(editEvent.recurrenceRule ?? "none");
-      const allDay =
-        format(new Date(String(editEvent.startTime)), "HH:mm") === "00:00";
+      const allDay = format(evStart, "HH:mm") === "00:00";
       setIsAllDay(allDay);
-      setStartTime(
-        allDay ? "09:00" : format(new Date(String(editEvent.startTime)), "HH:mm")
-      );
-      setEndTime(
-        allDay ? "10:00" : format(new Date(String(editEvent.endTime)), "HH:mm")
-      );
+      setStartDate(format(evStart, "yyyy-MM-dd"));
+      setEndDate(format(evEnd, "yyyy-MM-dd"));
+      setStartTime(allDay ? "09:00" : format(evStart, "HH:mm"));
+      setEndTime(allDay ? "10:00" : format(evEnd, "HH:mm"));
       setShowAdvanced(!!editEvent.description);
     } else {
+      const base = format(initialDate ?? new Date(), "yyyy-MM-dd");
       setTitle("");
       setIsAllDay(true);
+      setStartDate(base);
+      setEndDate(base);
       setStartTime("09:00");
       setEndTime("10:00");
       setCalendarId("");
@@ -134,25 +135,27 @@ export function EventForm({
     },
   });
 
+  // Pokud existuje právě jeden kalendář, předvyber ho automaticky.
+  // useEffect reaguje na načtení dat — calendarId zůstane prázdný jen do té doby.
+  useEffect(() => {
+    if (userCalendars.length === 1 && !isEditMode && !calendarId) {
+      setCalendarId(userCalendars[0].id);
+    }
+  }, [userCalendars, isEditMode, calendarId]);
+
   const selectedCalendar = userCalendars.find((c) => c.id === calendarId);
 
   const saveEvent = useMutation({
     mutationFn: async () => {
-      const y = refDate.getFullYear();
-      const mo = refDate.getMonth();
-      const d = refDate.getDate();
-
       let startISO: string;
       let endISO: string;
 
       if (isAllDay) {
-        startISO = new Date(y, mo, d, 0, 0, 0).toISOString();
-        endISO = new Date(y, mo, d, 23, 59, 0).toISOString();
+        startISO = new Date(`${startDate}T00:00:00`).toISOString();
+        endISO = new Date(`${endDate}T23:59:00`).toISOString();
       } else {
-        const [sh, sm] = startTime.split(":").map(Number);
-        const [eh, em] = endTime.split(":").map(Number);
-        startISO = new Date(y, mo, d, sh, sm, 0).toISOString();
-        endISO = new Date(y, mo, d, eh, em, 0).toISOString();
+        startISO = new Date(`${startDate}T${startTime}:00`).toISOString();
+        endISO = new Date(`${endDate}T${endTime}:00`).toISOString();
       }
 
       if (isEditMode && editEvent) {
@@ -196,8 +199,11 @@ export function EventForm({
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       setTimeout(() => {
+        const base = format(initialDate ?? new Date(), "yyyy-MM-dd");
         setTitle("");
         setIsAllDay(true);
+        setStartDate(base);
+        setEndDate(base);
         setStartTime("09:00");
         setEndTime("10:00");
         setCalendarId("");
@@ -212,19 +218,24 @@ export function EventForm({
   const isValid =
     title.trim().length > 0 &&
     (isEditMode || calendarId.length > 0) &&
-    (isAllDay || startTime < endTime);
+    startDate.length > 0 &&
+    endDate.length > 0 &&
+    startDate <= endDate &&
+    (isAllDay || startDate < endDate || startTime < endTime);
 
+  const refDate = startDate ? parseISO(startDate) : (initialDate ?? new Date());
   const recurrenceOptions = getRecurrenceOptions(refDate);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-md gap-0 overflow-hidden p-0">
-        <DialogHeader className="px-6 pb-2 pt-5">
-          <DialogTitle className="text-base font-medium text-muted-foreground">
+      <DialogContent className="gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-md">
+        <DialogHeader className="px-6 pb-2 pt-6">
+          <DialogTitle className="font-display text-base font-medium text-muted-foreground">
             {isEditMode
               ? "Upravit událost"
               : format(refDate, "EEEE, d. MMMM yyyy", { locale: cs })}
           </DialogTitle>
+
           <DialogDescription className="sr-only">
             {isEditMode
               ? "Formulář pro úpravu kalendářní události"
@@ -245,40 +256,54 @@ export function EventForm({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Přidat název"
-              className="border-0 border-b border-border rounded-none px-0 text-xl font-semibold shadow-none placeholder:text-muted-foreground/50 focus-visible:ring-0 focus-visible:border-b-primary"
+              className="rounded-none border-0 border-b border-border px-0 font-display text-xl font-semibold shadow-none placeholder:text-muted-foreground/50 focus-visible:border-b-primary focus-visible:ring-0"
               autoFocus
               required
             />
           </div>
 
           <div className="flex flex-col gap-1 px-6 pb-4">
-            {/* ── Čas + celodenní přepínač ─────────────────────────────── */}
-            <div className="flex items-center gap-3 py-1.5">
-              <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {/* ── Datum + čas + celodenní přepínač ────────────────────── */}
+            <div className="flex items-start gap-3 py-1.5">
+              <Clock className="mt-1.5 h-4 w-4 shrink-0 text-muted-foreground" />
 
-              <div className="flex flex-1 items-center gap-2">
-                {isAllDay ? (
-                  <span className="text-sm">Celodenní</span>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      className="h-8 w-27.5 text-sm"
-                    />
-                    <span className="text-muted-foreground">–</span>
-                    <Input
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      className="h-8 w-27.5 text-sm"
-                    />
-                  </div>
+              <div className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-1.5">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    if (e.target.value > endDate) setEndDate(e.target.value);
+                  }}
+                  className="h-8 w-auto text-sm"
+                />
+                {!isAllDay && (
+                  <Input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="h-8 w-26 text-sm"
+                  />
+                )}
+                <span className="text-muted-foreground">–</span>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  min={startDate}
+                  className="h-8 w-auto text-sm"
+                />
+                {!isAllDay && (
+                  <Input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="h-8 w-26 text-sm"
+                  />
                 )}
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2 pt-1">
                 <Label
                   htmlFor="allday"
                   className="cursor-pointer text-xs text-muted-foreground"
@@ -293,46 +318,52 @@ export function EventForm({
               </div>
             </div>
 
-            {!isAllDay && startTime >= endTime && (
+            {startDate > endDate && (
               <p className="ml-7 text-xs text-destructive">
-                Konec musí být po začátku
+                Datum konce musí být po datu začátku
+              </p>
+            )}
+            {!isAllDay && startDate === endDate && startTime >= endTime && (
+              <p className="ml-7 text-xs text-destructive">
+                Čas konce musí být po čase začátku
               </p>
             )}
 
             {/* ── Výběr kalendáře ──────────────────────────────────────── */}
-            <div className="flex items-center gap-3 py-1.5">
-              <div className="flex h-4 w-4 shrink-0 items-center justify-center">
-                <span
-                  className="h-3 w-3 rounded-full transition-colors"
-                  style={{
-                    backgroundColor: selectedCalendar?.colorHex ?? "#94a3b8",
-                  }}
-                />
+            {!isEditMode && userCalendars.length > 1 && (
+              <div className="flex items-center gap-3 py-1.5">
+                <div className="flex h-4 w-4 shrink-0 items-center justify-center">
+                  <span
+                    className="h-3 w-3 rounded-full transition-colors"
+                    style={{
+                      backgroundColor: selectedCalendar?.colorHex ?? "#94a3b8",
+                    }}
+                  />
+                </div>
+                <Select
+                  value={calendarId}
+                  onValueChange={setCalendarId}
+                  required
+                >
+                  <SelectTrigger className="h-8 flex-1 text-sm">
+                    <SelectValue placeholder="Vyberte kalendář" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userCalendars.map((cal) => (
+                      <SelectItem key={cal.id} value={cal.id}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: cal.colorHex }}
+                          />
+                          {cal.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Select
-                value={calendarId}
-                onValueChange={setCalendarId}
-                required={!isEditMode}
-                disabled={isEditMode}
-              >
-                <SelectTrigger className="h-8 flex-1 text-sm">
-                  <SelectValue placeholder="Vyberte kalendář" />
-                </SelectTrigger>
-                <SelectContent>
-                  {userCalendars.map((cal) => (
-                    <SelectItem key={cal.id} value={cal.id}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: cal.colorHex }}
-                        />
-                        {cal.name}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            )}
 
             {/* ── Opakování ────────────────────────────────────────────── */}
             <div className="flex items-center gap-3 py-1.5">
@@ -391,11 +422,12 @@ export function EventForm({
             </p>
           )}
 
-          <div className="flex justify-end gap-2 border-t bg-muted/30 px-6 py-3">
+          <div className="flex justify-end gap-2 border-t bg-muted/30 px-6 py-4">
             <Button
               type="button"
               variant="ghost"
               size="sm"
+              className="rounded-2xl"
               onClick={() => handleOpenChange(false)}
             >
               Zrušit
@@ -403,6 +435,7 @@ export function EventForm({
             <Button
               type="submit"
               size="sm"
+              className="rounded-2xl"
               disabled={!isValid || saveEvent.isPending}
             >
               {saveEvent.isPending

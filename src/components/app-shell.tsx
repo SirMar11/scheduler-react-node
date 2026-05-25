@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
+  SheetTitle,
 } from "@/components/ui/sheet";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { Sidebar } from "@/components/sidebar";
 import { CalendarView } from "@/components/calendar-view";
-
 interface AppShellProps {
   userEmail: string;
 }
@@ -52,6 +53,9 @@ export function AppShell({ userEmail }: AppShellProps) {
           className="w-64 p-0"
           aria-describedby={undefined}
         >
+          <VisuallyHidden>
+            <SheetTitle>Navigace</SheetTitle>
+          </VisuallyHidden>
           <Sidebar />
         </SheetContent>
       </Sheet>

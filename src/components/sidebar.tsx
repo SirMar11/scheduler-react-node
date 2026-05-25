@@ -2,218 +2,137 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarIcon, LogOutIcon, Plus, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { apiClient } from "@/lib/client";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { CalendarIcon, PlusIcon, LogOutIcon } from "lucide-react";
-
-// Předvolené barvy pro výběr při tvorbě kalendáře
-const PRESET_COLORS = [
-  "#3B82F6", // blue
-  "#10B981", // emerald
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#8B5CF6", // violet
-  "#EC4899", // pink
-];
+import { NoteEditDialog, type NoteRow } from "@/components/note-edit-dialog";
 
 export function Sidebar() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [colorHex, setColorHex] = useState(PRESET_COLORS[0]);
-
   const router = useRouter();
-  const supabase = createClient();
-  // useQueryClient() vrátí stejnou instanci QueryClient z Providers —
-  // použijeme ho pro invalidaci cache po mutaci
   const queryClient = useQueryClient();
+  const [noteDialogOpen, setNoteDialogOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<NoteRow | null>(null);
 
-  // ── Fetch kalendářů ───────────────────────────────────────────────────────
-  // useQuery fetchne data při mountu a cachuje je pod klíčem ["calendars"].
-  // Pokud jiná komponenta použije stejný klíč, dostane data z cache (bez nového fetche).
-  const { data: userCalendars = [], isLoading } = useQuery({
-    queryKey: ["calendars"],
+  // Plovoucí poznámky — bez targetDate
+  const { data: floatingNotes = [], isLoading } = useQuery<NoteRow[]>({
+    queryKey: ["notes", "floating"],
     queryFn: async () => {
-      const res = await apiClient.api.calendars.$get();
-      if (!res.ok) throw new Error("Nepodařilo se načíst kalendáře");
-      return res.json();
+      const res = await apiClient.api.notes.$get({ query: {} });
+      if (!res.ok) throw new Error("Nepodařilo se načíst poznámky");
+      return res.json() as Promise<NoteRow[]>;
     },
   });
 
-  // ── Vytvoření kalendáře ────────────────────────────────────────────────────
-  // useMutation pro operace, které mění data (POST/PATCH/DELETE).
-  // onSuccess invaliduje cache ["calendars"] → useQuery výše se automaticky
-  // znovu spustí a stáhne čerstvá data. To je reaktivní UI bez ručního setState.
-  const createCalendar = useMutation({
-    mutationFn: async (data: { name: string; colorHex: string }) => {
-      const res = await apiClient.api.calendars.$post({ json: data });
-      if (!res.ok) throw new Error("Nepodařilo se vytvořit kalendář");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["calendars"] });
-      toast.success("Kalendář vytvořen");
-      setIsOpen(false);
-      setName("");
-      setColorHex(PRESET_COLORS[0]);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  // ── Odhlášení ─────────────────────────────────────────────────────────────
   async function handleLogout() {
-    // Synchronní clear před signOut — příští uživatel neuvidí tato data
     queryClient.clear();
-    await supabase.auth.signOut();
+    await createClient().auth.signOut();
     router.push("/login");
     router.refresh();
   }
 
-  function handleCreateCalendar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    createCalendar.mutate({ name: name.trim(), colorHex });
+  function openAddNote() {
+    setEditingNote(null);
+    setNoteDialogOpen(true);
+  }
+
+  function openEditNote(note: NoteRow) {
+    setEditingNote(note);
+    setNoteDialogOpen(true);
   }
 
   return (
-    <aside className="flex h-full w-64 flex-col border-r bg-background">
-      {/* Logo */}
-      <div className="flex h-14 items-center gap-2 px-4 font-semibold">
-        <CalendarIcon className="h-5 w-5" />
-        <span>Scheduler</span>
-      </div>
-
-      <Separator />
-
-      {/* Seznam kalendářů */}
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
-        <div className="mb-1 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Kalendáře
+    <>
+      <aside className="flex h-full w-60 flex-col border-r bg-background">
+        {/* Logo */}
+        <div className="flex h-14 shrink-0 items-center gap-2 px-4">
+          <CalendarIcon className="h-5 w-5 text-primary" />
+          <span className="font-semibold tracking-tight">Scheduler</span>
         </div>
 
-        {isLoading && (
-          <div className="flex flex-col gap-1 px-2">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-2 py-1.5">
-                <Skeleton className="h-3 w-3 rounded-full" />
-                <Skeleton className="h-3.5 flex-1 rounded" />
-              </div>
-            ))}
-          </div>
-        )}
+        <Separator />
 
-        {userCalendars.map((calendar) => (
-          <div
-            key={calendar.id}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent cursor-pointer"
-          >
-            {/* Barevný indikátor kalendáře */}
-            <span
-              className="h-3 w-3 rounded-full shrink-0"
-              style={{ backgroundColor: calendar.colorHex }}
-            />
-            <span className="truncate">{calendar.name}</span>
-          </div>
-        ))}
-
-        {/* Tlačítko pro nový kalendář */}
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger asChild>
+        {/* Plovoucí poznámky */}
+        <div className="flex flex-1 flex-col overflow-hidden px-3 py-3">
+          <div className="mb-2 flex items-center justify-between px-2">
+            <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+              Poznámky
+            </p>
             <Button
               variant="ghost"
-              size="sm"
-              className="mt-1 w-full justify-start gap-2 text-muted-foreground"
+              size="icon"
+              className="h-5 w-5 text-muted-foreground hover:text-foreground"
+              onClick={openAddNote}
+              aria-label="Přidat poznámku"
             >
-              <PlusIcon className="h-4 w-4" />
-              Nový kalendář
+              <Plus className="h-3.5 w-3.5" />
             </Button>
-          </DialogTrigger>
+          </div>
 
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Vytvořit kalendář</DialogTitle>
-              <DialogDescription className="sr-only">
-                Formulář pro vytvoření nového kalendáře
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleCreateCalendar} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="cal-name">Název</Label>
-                <Input
-                  id="cal-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Můj kalendář"
-                  required
-                />
+          <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+            {isLoading ? (
+              <div className="flex flex-col gap-1.5 px-2 pt-1">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-start gap-2 py-1">
+                    <Skeleton className="mt-0.5 h-3.5 w-3.5 rounded" />
+                    <div className="flex flex-1 flex-col gap-1">
+                      <Skeleton className="h-3.5 w-3/4 rounded" />
+                      <Skeleton className="h-3 w-1/2 rounded" />
+                    </div>
+                  </div>
+                ))}
               </div>
+            ) : floatingNotes.length === 0 ? (
+              <p className="px-2 py-3 text-xs text-muted-foreground">
+                Žádné poznámky
+              </p>
+            ) : (
+              floatingNotes.map((note) => (
+                <button
+                  key={note.id}
+                  onClick={() => openEditNote(note)}
+                  className="flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
+                >
+                  <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{note.title}</p>
+                    {note.content && (
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {note.content}
+                      </p>
+                    )}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
 
-              <div className="space-y-2">
-                <Label>Barva</Label>
-                <div className="flex gap-2">
-                  {PRESET_COLORS.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      onClick={() => setColorHex(color)}
-                      className="h-7 w-7 rounded-full transition-transform hover:scale-110"
-                      style={{
-                        backgroundColor: color,
-                        outline:
-                          colorHex === color ? `2px solid ${color}` : "none",
-                        outlineOffset: "2px",
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
+        <Separator />
 
-              {createCalendar.isError && (
-                <p className="text-sm text-destructive">
-                  {createCalendar.error.message}
-                </p>
-              )}
+        {/* Odhlášení */}
+        <div className="shrink-0 p-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleLogout}
+            className="w-full justify-start gap-2 text-muted-foreground"
+          >
+            <LogOutIcon className="h-4 w-4" />
+            Odhlásit se
+          </Button>
+        </div>
+      </aside>
 
-              <Button
-                type="submit"
-                className="w-full"
-                disabled={createCalendar.isPending}
-              >
-                {createCalendar.isPending ? "Ukládám..." : "Vytvořit"}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <Separator />
-
-      {/* Odhlášení */}
-      <div className="p-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleLogout}
-          className="w-full justify-start gap-2 text-muted-foreground"
-        >
-          <LogOutIcon className="h-4 w-4" />
-          Odhlásit se
-        </Button>
-      </div>
-    </aside>
+      <NoteEditDialog
+        note={editingNote}
+        targetDate={null}
+        open={noteDialogOpen}
+        onOpenChange={setNoteDialogOpen}
+      />
+    </>
   );
 }

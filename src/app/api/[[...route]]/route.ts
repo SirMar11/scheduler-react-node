@@ -4,7 +4,7 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, inArray, isNull } from "drizzle-orm";
 import { rrulestr } from "rrule";
 import { db } from "@/db";
 import { events, calendars, notes } from "@/db/schema";
@@ -118,8 +118,9 @@ const routes = app
 
       for (const event of baseEvents) {
         if (!event.recurrenceRule) {
-          // Neopakující: zahrň jen pokud startTime leží v [from, to]
-          if (event.startTime >= fromDate) {
+          // Neopakující: zahrň pokud událost překrývá rozsah [from, to]
+          // (zachytí i vícedenní události začínající před from)
+          if (event.startTime <= toDate && event.endTime >= fromDate) {
             result.push(event);
           }
           continue;
@@ -130,7 +131,7 @@ const routes = app
           const rule = rrulestr(event.recurrenceRule, {
             dtstart: event.startTime,
           });
-          const occurrences = rule.between(fromDate, toDate, true);
+          const occurrences = rule.between(fromDate, toDate, true).slice(0, 100);
 
           for (const occ of occurrences) {
             result.push({
@@ -153,6 +154,17 @@ const routes = app
 
   .post("/events", zValidator("json", createEventSchema), async (c) => {
     const body = c.req.valid("json");
+
+    // Pravidlo bez COUNT/UNTIL by se opakovalo donekonečna — omezíme na 100 výskytů.
+    let recurrenceRule = body.recurrenceRule;
+    if (
+      recurrenceRule &&
+      !recurrenceRule.includes("COUNT=") &&
+      !recurrenceRule.includes("UNTIL=")
+    ) {
+      recurrenceRule += ";COUNT=100";
+    }
+
     const [event] = await db
       .insert(events)
       .values({
@@ -161,7 +173,7 @@ const routes = app
         description: body.description,
         startTime: new Date(body.startTime),
         endTime: new Date(body.endTime),
-        recurrenceRule: body.recurrenceRule,
+        recurrenceRule,
       })
       .returning();
     return c.json(event, 201);
@@ -223,10 +235,21 @@ const routes = app
 
   .get("/calendars", async (c) => {
     const userId = c.get("userId");
-    const userCalendars = await db
+    let userCalendars = await db
       .select()
       .from(calendars)
       .where(eq(calendars.userId, userId));
+
+    // První přihlášení — automaticky vytvoříme výchozí kalendář.
+    // Budoucí sdílené kalendáře budou přidávány jiným mechanismem (pozvánky apod.).
+    if (userCalendars.length === 0) {
+      const [defaultCalendar] = await db
+        .insert(calendars)
+        .values({ name: "Můj kalendář", colorHex: "#3B82F6", userId })
+        .returning();
+      userCalendars = [defaultCalendar];
+    }
+
     return c.json(userCalendars);
   })
 
@@ -272,19 +295,27 @@ const routes = app
 
   .get(
     "/notes",
-    zValidator("query", z.object({ from: dateString, to: dateString })),
+    zValidator(
+      "query",
+      z.object({ from: dateString.optional(), to: dateString.optional() })
+    ),
     async (c) => {
       const userId = c.get("userId");
       const { from, to } = c.req.valid("query");
+
+      // Bez from/to → plovoucí poznámky (targetDate IS NULL).
+      // S from/to → poznámky pro dané datové rozmezí.
       const userNotes = await db
         .select()
         .from(notes)
         .where(
-          and(
-            eq(notes.userId, userId),
-            gte(notes.targetDate, from),
-            lte(notes.targetDate, to)
-          )
+          from && to
+            ? and(
+                eq(notes.userId, userId),
+                gte(notes.targetDate, from),
+                lte(notes.targetDate, to)
+              )
+            : and(eq(notes.userId, userId), isNull(notes.targetDate))
         );
       return c.json(userNotes);
     }

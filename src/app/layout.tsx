@@ -1,29 +1,37 @@
 import type { Metadata, Viewport } from "next";
-import { Geist } from "next/font/google";
+import { Outfit, DM_Sans } from "next/font/google";
+import { ThemeProvider } from "next-themes";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-sf-pro-display",
+const outfit = Outfit({
+  variable: "--font-outfit",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "Scheduler",
   description: "Osobní time-management nástroj",
   manifest: "/manifest.webmanifest",
-  // iOS — zobrazit jako fullscreen app bez Safari UI
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Scheduler",
   },
-  // Ikona pro Add to Home Screen na iOS
   icons: {
     apple: "/icons/icon.svg",
   },
 };
 
-// Viewport se od Next.js 14 exportuje zvlášť — themeColor nesmí být v metadata
 export const viewport: Viewport = {
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#3B82F6" },
@@ -31,7 +39,6 @@ export const viewport: Viewport = {
   ],
   width: "device-width",
   initialScale: 1,
-  // maximumScale 1 zabrání nechtěnému double-tap zoom v input polích na iOS
   maximumScale: 1,
 };
 
@@ -43,11 +50,13 @@ export default function RootLayout({
   return (
     <html
       lang="cs"
-      className={`${geistSans.variable} h-full antialiased`}
+      className={`${outfit.variable} ${dmSans.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="h-full">
-        <Providers>{children}</Providers>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <Providers>{children}</Providers>
+        </ThemeProvider>
       </body>
     </html>
   );
